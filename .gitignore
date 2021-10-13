@@ -1,0 +1,6 @@
+# ignore temp/swap files
+*.tmp
+*.swp
+
+# ignore output folder
+build/
