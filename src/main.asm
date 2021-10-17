@@ -4,9 +4,12 @@
 	sei
 	+MapIO
 
-start
-	lda #0
-	sta $d020
-	sta $d021
-	jmp start
+	ldx #0
 
+loop
+	cpx $d012
+	bne loop
+	stx $d020
+	stx $d021
+	inx
+	jmp loop
