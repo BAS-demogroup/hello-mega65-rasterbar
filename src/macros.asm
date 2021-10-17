@@ -35,6 +35,20 @@
 	!byte $00,$00			;End of basic terminators
 }
 
+!macro MapIO {
+        lda #0
+        tax
+        tay
+        taz
+        map
+        eom
+
+        lda #$37
+        sta $00
+        lda #$35
+        sta $01
+}
+
 !macro enable_40mhz {
 	lda #65
 	sta $00
