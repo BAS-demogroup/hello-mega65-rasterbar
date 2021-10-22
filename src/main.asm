@@ -34,20 +34,19 @@
 	lda #0
 	ldx #0
 init:
-	sta .rb_buffer, x
-	inc
-	inx
-	bne init
 
-init2:
-	sta .rb_buffer+256, x
-	inc
-	inx
-	bne init2
-
-wait:
-	inc
 	jmp init
+
+
+;*****************************************************************************
+; IRQ Handler
+; -----------
+; Called from the VIC for each raster line.  Simply looks up the color for
+; the current raster line from our buffer, and sets the color for the border
+; border and background colors to the VIC.
+;*****************************************************************************
+
+.irq_temp	!byte $00, $00
 
 irq_handler:
 	; save registers (faster than pha/txa/etc)
@@ -58,24 +57,37 @@ irq_handler:
 	lda #$ff
 	sta $d019
 
-	; read color from buffer for this raster line we're currently processing
-	ldx .rb_line
-	lda .rb_line+1
-	beq irq_rb_line_low
-	lda .rb_buffer+256, x
+	; check which buffer (0 or 1) we're reading from
+	lda .rb_buffer_read_index
+	bne irq_rb_buffer_1
+
+	; read color for this raster line we're currently processing
+	ldx .rb_cur_line
+	lda .rb_cur_line+1
+	beq irq_rb_line_low_0
+	lda .rb_color_buffer_0+256, x
+	jmp irq_rb_set
+irq_rb_line_low_0:
+	lda .rb_color_buffer_0, x
 	jmp irq_rb_set
 
-irq_rb_line_low:
-	lda .rb_buffer, x
+irq_rb_buffer_1:
+	ldx .rb_cur_line
+	lda .rb_cur_line+1
+	beq irq_rb_line_low_1
+	lda .rb_color_buffer_1+256, x
+	jmp irq_rb_set
+irq_rb_line_low_1:
+	lda .rb_color_buffer_1, x
 
-irq_rb_set:	
+irq_rb_set:
 	; set border and background colors
 	sta $d020
 	sta $d021
 
 	; increment to next raster line
-	ldx .rb_line
-	lda .rb_line+1
+	ldx .rb_cur_line
+	lda .rb_cur_line+1
 	beq irq_inc_low
 
 	; check if we hit the last screen line (PAL has 312 lines, so 312-256=56)
@@ -85,23 +97,32 @@ irq_rb_set:
 
 	; we hit the last line, so reset to line zero
 	lda #0
-	sta .rb_line
-	sta .rb_line+1
+	sta .rb_cur_line
+	sta .rb_cur_line+1
 	sta $d012
 	lda #$1b
 	sta $d011
+
+	; swap read/write index and flag that we need an update for the next frame
+	lda #1
+	sta .rb_need_update
+	eor .rb_buffer_read_index
+	sta .rb_buffer_read_index
+	lda #1
+	eor .rb_buffer_write_index
+	sta .rb_buffer_write_index
 	jmp irq_done
 
 irq_inc_low:
 	inx
 
 irq_set_vic_line:
-	stx .rb_line
+	stx .rb_cur_line
 	stx $d012
 	bne irq_done
 
 	; handle rollover (screen line 255 -> 256)
-	inc .rb_line+1
+	inc .rb_cur_line+1
 	lda #$9b				; set high bit (bit 7) in VIC for irqs on raster lines >= 256
 	sta $d011
 
@@ -111,6 +132,9 @@ irq_done:
 	ldx .irq_temp+1
 	rti
 
-.rb_line	!word $00
-.rb_buffer	!fill 512, $00
-.irq_temp	!byte $00, $00, $00
+.rb_cur_line			!word $00
+.rb_color_buffer_0		!fill 312, $00
+.rb_color_buffer_1		!fill 312, $01
+.rb_buffer_read_index	!byte $00
+.rb_buffer_write_index	!byte $01
+.rb_need_update			!byte $00
