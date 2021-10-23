@@ -2,7 +2,7 @@
 
 !addr .rb_read_buffer_ptr	= $02
 !addr .rb_write_buffer_ptr	= $04
-
+!addr .rb_colors_ptr		= $06
 
 	+BasicUpstart65
 	sei
@@ -26,6 +26,23 @@ update_wait:
 	; clear update flag
 	lda #0
 	sta .rb_need_update
+
+	; copy rasterbar 0 into write buffer at appropriate Y position
+	lda #<.rb0_colors
+	sta .rb_colors_ptr
+	lda #>.rb0_colors
+	sta .rb_colors_ptr+1
+	lda .rb_write_buffer_ptr
+	adc #$a0
+	sta .rb_write_buffer_ptr
+	ldx #8
+	ldy #0
+copy_loop:
+	lda (.rb_colors_ptr), y
+	sta (.rb_write_buffer_ptr), y
+	iny
+	dex
+	bne copy_loop
 
 	jmp update_wait
 
@@ -172,6 +189,11 @@ _rb_sbp_write_buf_1:
 
 .rb_cur_line			!word $00
 .rb_color_buffer_0		!fill 312, $00
-.rb_color_buffer_1		!fill 312, $01
+.rb_color_buffer_1		!fill 312, $00
 .rb_write_index			!byte $01
 .rb_need_update			!byte $01
+
+.rb0_colors				!byte $06, $0e, $03, $01, $01, $03, $0e, $06
+.rb0_ypos				!word $00
+.rb0_ydir				!byte $01			; 0=up, 1=down
+
