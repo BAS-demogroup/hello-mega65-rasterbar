@@ -1,9 +1,36 @@
 !source "macros.asm"
 
+!addr .rb_read_buffer_ptr	= $02
+!addr .rb_write_buffer_ptr	= $04
+
+
 	+BasicUpstart65
 	sei
 	+MapIO
 
+	; initialize our handler for processing VIC interrupts
+	jsr set_irq_handler
+
+	; initialize read/write buffer pointers (start with read=0/write=1)
+	lda .rb_write_index
+	jsr rb_set_buffer_ptrs
+
+	; enable interrupts to start rasterbars
+	cli
+
+update_wait:
+	; idle wait until update flag is set
+	lda .rb_need_update
+	beq update_wait
+
+	; clear update flag
+	lda #0
+	sta .rb_need_update
+
+	jmp update_wait
+
+
+set_irq_handler:
 	; disable CIA timer interrupts
 	lda #$7f
 	sta $dc0d
@@ -28,14 +55,7 @@
 	; enable VIC raster interrupts
 	lda #$01
 	sta $d01a
-	cli
-
-	; temp init code to cycle raster bar colors
-	lda #0
-	ldx #0
-init:
-
-	jmp init
+	rts
 
 
 ;*****************************************************************************
@@ -51,48 +71,34 @@ init:
 irq_handler:
 	; save registers (faster than pha/txa/etc)
 	sta .irq_temp
-	stx .irq_temp+1
+	sty .irq_temp+1
 
 	; acknowledge the VIC interrupt
 	lda #$ff
 	sta $d019
 
-	; check which buffer (0 or 1) we're reading from
-	lda .rb_buffer_read_index
-	bne irq_rb_buffer_1
-
 	; read color for this raster line we're currently processing
-	ldx .rb_cur_line
-	lda .rb_cur_line+1
-	beq irq_rb_line_low_0
-	lda .rb_color_buffer_0+256, x
-	jmp irq_rb_set
-irq_rb_line_low_0:
-	lda .rb_color_buffer_0, x
-	jmp irq_rb_set
+	ldy #0
+	lda (.rb_read_buffer_ptr), y
 
-irq_rb_buffer_1:
-	ldx .rb_cur_line
-	lda .rb_cur_line+1
-	beq irq_rb_line_low_1
-	lda .rb_color_buffer_1+256, x
-	jmp irq_rb_set
-irq_rb_line_low_1:
-	lda .rb_color_buffer_1, x
-
-irq_rb_set:
 	; set border and background colors
 	sta $d020
 	sta $d021
 
+	; increment read buffer pointer
+	inc .rb_read_buffer_ptr
+	bne irq_inc_raster_line
+	inc .rb_read_buffer_ptr+1
+
+irq_inc_raster_line:
 	; increment to next raster line
-	ldx .rb_cur_line
+	ldy .rb_cur_line
 	lda .rb_cur_line+1
 	beq irq_inc_low
 
 	; check if we hit the last screen line (PAL has 312 lines, so 312-256=56)
-	inx
-	cpx #56
+	iny
+	cpy #56
 	bne irq_set_vic_line
 
 	; we hit the last line, so reset to line zero
@@ -103,22 +109,23 @@ irq_rb_set:
 	lda #$1b
 	sta $d011
 
-	; swap read/write index and flag that we need an update for the next frame
+	; swap read/write buffer pointers
+	lda #1
+	eor .rb_write_index
+	sta .rb_write_index
+	jsr rb_set_buffer_ptrs
+
+	; and flag that we need an update for the next frame
 	lda #1
 	sta .rb_need_update
-	eor .rb_buffer_read_index
-	sta .rb_buffer_read_index
-	lda #1
-	eor .rb_buffer_write_index
-	sta .rb_buffer_write_index
 	jmp irq_done
 
 irq_inc_low:
-	inx
+	iny
 
 irq_set_vic_line:
-	stx .rb_cur_line
-	stx $d012
+	sty .rb_cur_line
+	sty $d012
 	bne irq_done
 
 	; handle rollover (screen line 255 -> 256)
@@ -129,12 +136,42 @@ irq_set_vic_line:
 irq_done:
 	; restore registers and return
 	lda .irq_temp
-	ldx .irq_temp+1
+	ldy .irq_temp+1
 	rti
+
+
+; set read/write buffer pointers, zero flag specifies write buffer index
+rb_set_buffer_ptrs:
+	bne _rb_sbp_write_buf_1
+
+	; ZF clear: use buffer 1 for read and 0 for write
+	lda #<.rb_color_buffer_1
+	sta .rb_read_buffer_ptr
+	lda #>.rb_color_buffer_1
+	sta .rb_read_buffer_ptr+1
+
+	lda #<.rb_color_buffer_0
+	sta .rb_write_buffer_ptr
+	lda #>.rb_color_buffer_0
+	sta .rb_write_buffer_ptr+1
+	rts
+
+_rb_sbp_write_buf_1:
+	; ZF set: use buffer 0 for read and 1 for write
+	lda #<.rb_color_buffer_0
+	sta .rb_read_buffer_ptr
+	lda #>.rb_color_buffer_0
+	sta .rb_read_buffer_ptr+1
+
+	lda #<.rb_color_buffer_1
+	sta .rb_write_buffer_ptr
+	lda #>.rb_color_buffer_1
+	sta .rb_write_buffer_ptr+1
+	rts
+
 
 .rb_cur_line			!word $00
 .rb_color_buffer_0		!fill 312, $00
 .rb_color_buffer_1		!fill 312, $01
-.rb_buffer_read_index	!byte $00
-.rb_buffer_write_index	!byte $01
-.rb_need_update			!byte $00
+.rb_write_index			!byte $01
+.rb_need_update			!byte $01
